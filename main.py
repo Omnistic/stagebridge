@@ -4,18 +4,35 @@ from plotly.subplots import make_subplots
 
 import numpy as np
 
-from readers import read_positions
+from handlers import read_positions, write_positions
 from transform import apply_transform, calculate_transform, read_transform, write_transform
 
 import os
 
 file_columns = [
     {"name": "index", "label": "Index", "field": "index"},
-    {"name": "name", "label": "File Name", "field": "name"}
+    {"name": "name", "label": "File Name", "field": "name"},
+    {"name": "centroid_a", "label": "Centroid A", "field": "centroid_a"},
+    {"name": "centroid_b", "label": "Centroid B", "field": "centroid_b"},
+    {"name": "scaling", "label": "Scaling", "field": "scaling"},
+    {"name": "rotation", "label": "Rotation (degrees)", "field": "rotation"}
 ]
 def update_file_table(table, files):
     if files is not None:
-        table.rows = [{"index": i, "name": os.path.basename(file).removesuffix(".json")} for i, file in enumerate(files)]
+        rows = []
+        for i, file in enumerate(files):
+            name = os.path.basename(file).removesuffix(".json")
+            transform = read_transform(name)
+            rotation_deg = np.rad2deg(np.arctan2(np.array(transform["rotation"])[1, 0], np.array(transform["rotation"])[0, 0]))
+            rows.append({
+                "index": i,
+                "name": name,
+                "centroid_a": str(np.round(transform["centroid_a"], 2)),
+                "centroid_b": str(np.round(transform["centroid_b"], 2)),
+                "scaling": round(transform["scaling"], 4),
+                "rotation": round(rotation_deg, 2)
+            })
+        table.rows = rows
     else:
         table.rows = []
     table.update()
@@ -140,8 +157,18 @@ def calculate_transform_handle():
         transform_status_label.text = "Transform calculated successfully, but please enter a name for the transform to save it."
         return
 
-def load_transform(name):
-    app.storage.general["selected_transform"] = read_transform(name)
+def transform_positions(transform_name):
+    app.storage.general["selected_transform"] = read_transform(transform_name)
+    centroid_a = np.array(app.storage.general["selected_transform"]["centroid_a"])
+    centroid_b = np.array(app.storage.general["selected_transform"]["centroid_b"])
+    scaling = app.storage.general["selected_transform"]["scaling"]
+    rotation = np.array(app.storage.general["selected_transform"]["rotation"])
+    positions = app.storage.general.get("relocate_positions")
+
+    relocated_positions = apply_transform(positions, centroid_a, centroid_b, scaling, rotation)
+    file_to_download = write_positions(relocated_positions, "temp", "czstm")
+    extension = os.path.splitext(file_to_download)[1]
+    ui.download(file_to_download, filename=f"relocated_positions{extension}")
 
 def update_transform_dropdown():
     available_transforms = os.listdir("available_transforms") if os.path.exists("available_transforms") else []
@@ -149,7 +176,7 @@ def update_transform_dropdown():
     with transform_dropdown:
         for file in available_transforms:
             name = os.path.basename(file).removesuffix(".json")
-            ui.item(name, on_click=lambda n=name: load_transform(n))
+            ui.item(name, on_click=lambda n=name: transform_positions(n))
 
 def clear_all_data():
     app.storage.general.clear()
@@ -186,7 +213,7 @@ with ui.tab_panels(tabs, value=relocate_tab).classes("w-full"):
             ui.button("Calculate Transform", on_click=calculate_transform_handle)
             transform_status_label = ui.label("").classes("text-h7")
 ui.label("Available Transforms:").classes("text-h6")
-transform_file_table = ui.table(columns=file_columns, rows=[]).classes("w-96")
+transform_file_table = ui.table(columns=file_columns, rows=[]).classes("w-[800px]")
 ui.button("Clear all data", on_click=clear_all_data)
 update_transform_dropdown()
 ui.timer(2, sync)
