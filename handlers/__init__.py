@@ -1,11 +1,16 @@
 from .zeiss import ZeissHandler
+from .leica import LeicaHandler
 
 _zeiss_handler = ZeissHandler()
+_leica_handler = LeicaHandler()
 
 def read_positions(filename, content):
-    match filename.split(".")[-1].lower():
+    ext = filename.split(".")[-1].lower()
+    match ext:
         case "czstm":
             return _zeiss_handler.read(content)
+        case "maf" | "nes":
+            return _leica_handler.read(content, ext)
         case _:
             raise ValueError(f"Unsupported file type: {filename}")
         
