@@ -117,9 +117,10 @@ def make_upload_handler(source: str):
             app.storage.general[f"{source}_position_file"] = e.file.name
             app.storage.general[f"{source}_positions"] = read_positions(e.file.name, content)
             sync()
+            e.sender.reset()
         except ValueError as ex:
             ui.notify(f"Error: {ex}")
-    
+
     return handle_upload
 
 def calculate_transform_handle():
