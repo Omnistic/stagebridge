@@ -1,7 +1,5 @@
 <?xml version='1.0' encoding='utf-8'?>
 <StageMarks>
-  <StageMark ItemIndex="1" X="71529.2" Y="-11697.6" Z="0.0" />
-  <StageMark ItemIndex="2" X="71530.7" Y="-9697.3" Z="0.0" />
-  <StageMark ItemIndex="3" X="69525.4" Y="-9695.4" Z="0.0" />
-  <StageMark ItemIndex="4" X="69525.0" Y="-11694.5" Z="0.0" />
+  <StageMark ItemIndex="1" X="39825.3" Y="8634.8" Z="0.0" />
+  <StageMark ItemIndex="2" X="36946.8" Y="9822.6" Z="0.0" />
 </StageMarks>

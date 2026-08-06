@@ -7,7 +7,7 @@ import numpy as np
 from handlers import read_positions, write_positions
 from transform import apply_transform, calculate_transform, read_transform, write_transform
 
-import os
+import os, uuid
 
 file_columns = [
     {"name": "index", "label": "Index", "field": "index"},
@@ -15,7 +15,9 @@ file_columns = [
     {"name": "centroid_a", "label": "Centroid A", "field": "centroid_a"},
     {"name": "centroid_b", "label": "Centroid B", "field": "centroid_b"},
     {"name": "scaling", "label": "Scaling", "field": "scaling"},
-    {"name": "rotation", "label": "Rotation (degrees)", "field": "rotation"}
+    {"name": "rotation", "label": "Rotation (degrees)", "field": "rotation"},
+    {"name": "flip_x", "label": "Flip X", "field": "flip_x"},
+    {"name": "flip_y", "label": "Flip Y", "field": "flip_y"},
 ]
 def update_file_table(table, files):
     if files is not None:
@@ -24,13 +26,16 @@ def update_file_table(table, files):
             name = os.path.basename(file).removesuffix(".json")
             transform = read_transform(name)
             rotation_deg = np.rad2deg(np.arctan2(np.array(transform["rotation"])[1, 0], np.array(transform["rotation"])[0, 0]))
+            mirror = np.array(transform.get("mirror", [[1, 0], [0, 1]]))
             rows.append({
                 "index": i,
                 "name": name,
                 "centroid_a": str(np.round(transform["centroid_a"], 2)),
                 "centroid_b": str(np.round(transform["centroid_b"], 2)),
                 "scaling": round(transform["scaling"], 4),
-                "rotation": round(rotation_deg, 2)
+                "rotation": round(rotation_deg, 2),
+                "flip_x": bool(mirror[0, 0] < 0),
+                "flip_y": bool(mirror[1, 1] < 0),
             })
         table.rows = rows
     else:
@@ -73,6 +78,7 @@ def update_calibration_plot():
             np.array(transform["centroid_a"]),
             np.array(transform["centroid_b"]),
             transform["scaling"],
+            np.array(transform.get("mirror", [[1, 0], [0, 1]])),
             np.array(transform["rotation"])
         )
         fig.add_trace(go.Scatter(x=a_transformed[:, 0], y=a_transformed[:, 1], mode="markers+text", name="Microscope A (transformed)", marker=dict(color="#D55E00"), text=labels_a, textposition="top center", textfont=dict(color="#D55E00")), row=1, col=2)
@@ -135,11 +141,12 @@ def calculate_transform_handle():
         transform_status_label.text = "The number of positions in both files must be the same."
         return
 
-    centroid_a, centroid_b, scaling, rotation = calculate_transform(posiitons_a, positions_b)
+    centroid_a, centroid_b, scaling, mirror, rotation = calculate_transform(posiitons_a, positions_b)
     app.storage.general["transform"] = {
         "centroid_a": centroid_a.tolist(),
         "centroid_b": centroid_b.tolist(),
         "scaling": float(scaling),
+        "mirror": mirror.tolist(),
         "rotation": rotation.tolist()
     }
 
@@ -163,13 +170,19 @@ def transform_positions(transform_name):
     centroid_a = np.array(app.storage.general["selected_transform"]["centroid_a"])
     centroid_b = np.array(app.storage.general["selected_transform"]["centroid_b"])
     scaling = app.storage.general["selected_transform"]["scaling"]
+    mirror = np.array(app.storage.general["selected_transform"].get("mirror", [[1, 0], [0, 1]]))
     rotation = np.array(app.storage.general["selected_transform"]["rotation"])
     positions = app.storage.general.get("relocate_positions")
 
-    relocated_positions = apply_transform(positions, centroid_a, centroid_b, scaling, rotation)
-    file_to_download = write_positions(relocated_positions, "temp", "czstm")
-    extension = os.path.splitext(file_to_download)[1]
-    ui.download(file_to_download, filename=f"relocated_positions{extension}")
+    offset = np.array([offset_x_input.value or 0, offset_y_input.value or 0])
+    relocated_positions = apply_transform(positions, centroid_a, centroid_b, scaling, mirror, rotation) + offset
+    temp_path = write_positions(relocated_positions, f"temp_{uuid.uuid4().hex}", "czstm")
+    with open(temp_path, "rb") as f:
+        content = f.read()
+    os.remove(temp_path)
+    original_name = app.storage.general.get("relocate_position_file", "")
+    base = os.path.splitext(os.path.basename(original_name))[0] if original_name else "positions"
+    ui.download(content, filename=f"{base}_relocated.czstm")
 
 def update_transform_dropdown():
     available_transforms = os.listdir("available_transforms") if os.path.exists("available_transforms") else []
@@ -181,6 +194,8 @@ def update_transform_dropdown():
 
 def clear_all_data():
     app.storage.general.clear()
+    offset_x_input.value = 0
+    offset_y_input.value = 0
     sync()
 
 with ui.tabs().classes("w-full") as tabs:
@@ -191,19 +206,22 @@ with ui.tab_panels(tabs, value=relocate_tab).classes("w-full"):
         ui.upload(label="Position file", max_files=1, auto_upload=True, on_upload=make_upload_handler("relocate"))
         relocate_position_label = ui.label("Position file in memory:").classes("text-gray-400 text-sm")
         relocate_position_table = ui.table(columns=position_columns, rows=[])
+        with ui.row().classes("items-center gap-4"):
+            offset_x_input = ui.number(label="X Offset", value=0, precision=0).classes("w-32")
+            offset_y_input = ui.number(label="Y Offset", value=0, precision=0).classes("w-32")
         transform_dropdown = ui.dropdown_button("Apply transform", auto_close=True)
         transform_dropdown.bind_enabled_from(relocate_position_table, 'rows', backward=lambda rows: len(rows) > 0)
     with ui.tab_panel(calibrate_tab):
         with ui.splitter() as splitter:
             with splitter.before:
                 with ui.column().classes("pr-8"):
-                    ui.label("Microscope A").classes("text-h6")
+                    ui.label("From Microscope A").classes("text-h6")
                     ui.upload(label="Position file", max_files=1, auto_upload=True, on_upload=make_upload_handler("calibrate_a"))
                     calibrate_a_position_label = ui.label("Position file in memory:").classes("text-gray-400 text-sm")
                     calibrate_a_position_table = ui.table(columns=position_columns, rows=[])
             with splitter.after:
                 with ui.column().classes("pl-8"):
-                    ui.label("Microscope B").classes("text-h6")
+                    ui.label("To Microscope B").classes("text-h6")
                     ui.upload(label="Position file", max_files=1, auto_upload=True, on_upload=make_upload_handler("calibrate_b"))
                     calibrate_b_position_label = ui.label("Position file in memory:").classes("text-gray-400 text-sm")
                     calibrate_b_position_table = ui.table(columns=position_columns, rows=[])
@@ -214,7 +232,9 @@ with ui.tab_panels(tabs, value=relocate_tab).classes("w-full"):
             ui.button("Calculate Transform", on_click=calculate_transform_handle)
             transform_status_label = ui.label("").classes("text-h7")
 ui.label("Available Transforms:").classes("text-h6")
-transform_file_table = ui.table(columns=file_columns, rows=[]).classes("w-[800px]")
+transform_file_table = ui.table(columns=file_columns, rows=[]).classes("w-[1000px]")
+for _col in ("flip_x", "flip_y"):
+    transform_file_table.add_slot(f"body-cell-{_col}", '<q-td :props="props"><q-checkbox :model-value="props.value" disable /></q-td>')
 ui.button("Clear all data", on_click=clear_all_data)
 update_transform_dropdown()
 ui.timer(2, sync)

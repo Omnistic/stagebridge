@@ -16,19 +16,35 @@ def calculate_transform(positions_a, positions_b):
 
     scaling = np.sqrt(np.sum(centered_b**2) / np.sum(centered_a**2))
 
-    scaled_a = centered_a * scaling
+    mirrors = [
+        np.diag([1.0, 1.0]),
+        np.diag([-1.0, 1.0]),
+        np.diag([1.0, -1.0]),
+        np.diag([-1.0, -1.0]),
+    ]
 
-    H = centered_b.T @ scaled_a
-    U, _, Vt = np.linalg.svd(H)
-    rotation = U @ Vt
-    if np.linalg.det(rotation) < 0:
-        U[:, -1] *= -1
+    best_residual = np.inf
+    best_mirror = None
+    best_rotation = None
+
+    for mirror in mirrors:
+        scaled_a = (centered_a @ mirror) * scaling
+        H = centered_b.T @ scaled_a
+        U, _, Vt = np.linalg.svd(H)
         rotation = U @ Vt
+        if np.linalg.det(rotation) < 0:
+            U[:, -1] *= -1
+            rotation = U @ Vt
+        residual = np.sum((centered_b - scaled_a @ rotation.T) ** 2)
+        if residual < best_residual:
+            best_residual = residual
+            best_mirror = mirror
+            best_rotation = rotation
 
-    return centroid_a, centroid_b, scaling, rotation
+    return centroid_a, centroid_b, scaling, best_mirror, best_rotation
 
-def apply_transform(positions, centroid_a, centroid_b, scaling, rotation):
-    return (positions - centroid_a) * scaling @ rotation.T + centroid_b
+def apply_transform(positions, centroid_a, centroid_b, scaling, mirror, rotation):
+    return ((positions - centroid_a) @ mirror) * scaling @ rotation.T + centroid_b
 
 def write_transform(transform, filename):
     os.makedirs("available_transforms", exist_ok=True)

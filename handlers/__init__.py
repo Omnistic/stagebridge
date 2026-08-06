@@ -9,7 +9,7 @@ def read_positions(filename, content):
     match ext:
         case "czstm":
             return _zeiss_handler.read(content)
-        case "maf" | "nes":
+        case "maf" | "nes" | "rgn":
             return _leica_handler.read(content, ext)
         case _:
             raise ValueError(f"Unsupported file type: {filename}")

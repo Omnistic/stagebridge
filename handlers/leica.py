@@ -13,7 +13,7 @@ class LeicaHandler(BaseHandler):
                 x = float(mark.attrib["StageXPos"])
                 y = float(mark.attrib["StageYPos"])
                 positions.append([x, y])
-        elif ext == "nes":
+        elif ext in ("nes", "rgn"):
             for shape_item in root.iter():
                 type_el = shape_item.find("Type")
                 if type_el is not None and type_el.text == "Point":
