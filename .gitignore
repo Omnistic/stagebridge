@@ -134,6 +134,11 @@ celerybeat.pid
 # SageMath parsed files
 *.sage.py
 
+# NiceGUI persisted storage (contains per-user session data) and the
+# per-deployment secret used to sign session cookies
+.nicegui/
+.storage_secret
+
 # Environments
 .env
 .envrc

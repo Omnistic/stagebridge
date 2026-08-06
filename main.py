@@ -7,7 +7,28 @@ import numpy as np
 from handlers import read_positions, write_positions
 from transform import apply_transform, calculate_transform, read_transform, write_transform
 
-import os, uuid
+import os, uuid, secrets
+
+STORAGE_SECRET_FILE = ".storage_secret"
+
+
+def get_storage_secret() -> str:
+    """Return a stable secret for signing per-user session cookies.
+
+    Reads from the STAGEBRIDGE_STORAGE_SECRET environment variable if set,
+    otherwise reuses (or creates) a local secret file so that restarting the
+    app doesn't invalidate every user's in-progress session.
+    """
+    env_secret = os.environ.get("STAGEBRIDGE_STORAGE_SECRET")
+    if env_secret:
+        return env_secret
+    if os.path.exists(STORAGE_SECRET_FILE):
+        with open(STORAGE_SECRET_FILE) as f:
+            return f.read().strip()
+    new_secret = secrets.token_hex(32)
+    with open(STORAGE_SECRET_FILE, "w") as f:
+        f.write(new_secret)
+    return new_secret
 
 file_columns = [
     {"name": "index", "label": "Index", "field": "index"},
@@ -61,8 +82,8 @@ def update_calibration_plot():
         xaxis=dict(scaleanchor="y", scaleratio=1),
         xaxis2=dict(scaleanchor="y2", scaleratio=1),
     )
-    calibrate_a_positions = app.storage.general.get("calibrate_a_positions")
-    calibrate_b_positions = app.storage.general.get("calibrate_b_positions")
+    calibrate_a_positions = app.storage.user.get("calibrate_a_positions")
+    calibrate_b_positions = app.storage.user.get("calibrate_b_positions")
     if calibrate_a_positions is not None:
         a = np.array(calibrate_a_positions)
         labels_a = [str(i) for i in range(len(a))]
@@ -71,7 +92,7 @@ def update_calibration_plot():
         b = np.array(calibrate_b_positions)
         labels_b = [str(i) for i in range(len(b))]
         fig.add_trace(go.Scatter(x=b[:, 0], y=b[:, 1], mode="markers+text", name="Microscope B", marker=dict(color="#0072B2"), text=labels_b, textposition="bottom center", textfont=dict(color="#0072B2")), row=1, col=1)
-    transform = app.storage.general.get("transform")
+    transform = app.storage.user.get("transform")
     if transform is not None and calibrate_a_positions is not None and calibrate_b_positions is not None:
         a_transformed = apply_transform(
             np.array(calibrate_a_positions),
@@ -89,39 +110,39 @@ def sync():
     available_transforms = os.listdir("available_transforms") if os.path.exists("available_transforms") else []
     update_file_table(transform_file_table, available_transforms)
 
-    relocate_position_file = app.storage.general.get("relocate_position_file")
+    relocate_position_file = app.storage.user.get("relocate_position_file")
     if relocate_position_file:
         relocate_position_label.text = f"Position file in memory: {relocate_position_file}"
     else:
         relocate_position_label.text = "Position file in memory:"
 
-    relocate_positions = app.storage.general.get("relocate_positions")
+    relocate_positions = app.storage.user.get("relocate_positions")
     update_position_table(relocate_position_table, relocate_positions)
 
-    calibrate_a_position_file = app.storage.general.get("calibrate_a_position_file")
+    calibrate_a_position_file = app.storage.user.get("calibrate_a_position_file")
     if calibrate_a_position_file:
         calibrate_a_position_label.text = f"Position file in memory: {calibrate_a_position_file}"
     else:
         calibrate_a_position_label.text = "Position file in memory:"
 
-    calibrate_b_position_file = app.storage.general.get("calibrate_b_position_file")
+    calibrate_b_position_file = app.storage.user.get("calibrate_b_position_file")
     if calibrate_b_position_file:
         calibrate_b_position_label.text = f"Position file in memory: {calibrate_b_position_file}"
     else:
         calibrate_b_position_label.text = "Position file in memory:"
 
-    calibrate_a_positions = app.storage.general.get("calibrate_a_positions")
+    calibrate_a_positions = app.storage.user.get("calibrate_a_positions")
     update_position_table(calibrate_a_position_table, calibrate_a_positions)
 
-    calibrate_b_positions = app.storage.general.get("calibrate_b_positions")
+    calibrate_b_positions = app.storage.user.get("calibrate_b_positions")
     update_position_table(calibrate_b_position_table, calibrate_b_positions)
 
 def make_upload_handler(source: str):
     async def handle_upload(e: events.UploadEventArguments):
         content = await e.file.read()
         try:
-            app.storage.general[f"{source}_position_file"] = e.file.name
-            app.storage.general[f"{source}_positions"] = read_positions(e.file.name, content)
+            app.storage.user[f"{source}_position_file"] = e.file.name
+            app.storage.user[f"{source}_positions"] = read_positions(e.file.name, content)
             sync()
             e.sender.reset()
         except ValueError as ex:
@@ -130,19 +151,19 @@ def make_upload_handler(source: str):
     return handle_upload
 
 def calculate_transform_handle():
-    posiitons_a = app.storage.general.get("calibrate_a_positions")
-    positions_b = app.storage.general.get("calibrate_b_positions")
+    positions_a = app.storage.user.get("calibrate_a_positions")
+    positions_b = app.storage.user.get("calibrate_b_positions")
 
-    if posiitons_a is None or positions_b is None:
+    if positions_a is None or positions_b is None:
         transform_status_label.text = "Please upload position files for both microscopes before calculating the transform."
         return
-    
-    if len(posiitons_a) != len(positions_b):
+
+    if len(positions_a) != len(positions_b):
         transform_status_label.text = "The number of positions in both files must be the same."
         return
 
-    centroid_a, centroid_b, scaling, mirror, rotation = calculate_transform(posiitons_a, positions_b)
-    app.storage.general["transform"] = {
+    centroid_a, centroid_b, scaling, mirror, rotation = calculate_transform(positions_a, positions_b)
+    app.storage.user["transform"] = {
         "centroid_a": centroid_a.tolist(),
         "centroid_b": centroid_b.tolist(),
         "scaling": float(scaling),
@@ -152,35 +173,44 @@ def calculate_transform_handle():
 
     update_calibration_plot()
 
-    if transform_filename_input.value:
-        if transform_filename_input.value not in [file["name"] for file in transform_file_table.rows]:
-            write_transform(app.storage.general["transform"], transform_filename_input.value)
-            update_transform_dropdown()
-            transform_status_label.text = f"Transform calculated and saved as '{transform_filename_input.value}'."
-            sync()
-        else:
-            transform_status_label.text = "A transform with that name already exists. Please choose a different name to save this transform."
-            return
-    else:
+    if not transform_filename_input.value:
         transform_status_label.text = "Transform calculated successfully, but please enter a name for the transform to save it."
         return
 
+    try:
+        # write_transform() itself rejects an existing filename atomically,
+        # so two users saving the same name at the same moment can't clobber
+        # each other - whoever's write lands second gets this error instead.
+        write_transform(app.storage.user["transform"], transform_filename_input.value)
+    except FileExistsError:
+        transform_status_label.text = "A transform with that name already exists. Please choose a different name to save this transform."
+        return
+    except ValueError as ex:
+        transform_status_label.text = str(ex)
+        return
+
+    update_transform_dropdown()
+    transform_status_label.text = f"Transform calculated and saved as '{transform_filename_input.value}'."
+    sync()
+
 def transform_positions(transform_name):
-    app.storage.general["selected_transform"] = read_transform(transform_name)
-    centroid_a = np.array(app.storage.general["selected_transform"]["centroid_a"])
-    centroid_b = np.array(app.storage.general["selected_transform"]["centroid_b"])
-    scaling = app.storage.general["selected_transform"]["scaling"]
-    mirror = np.array(app.storage.general["selected_transform"].get("mirror", [[1, 0], [0, 1]]))
-    rotation = np.array(app.storage.general["selected_transform"]["rotation"])
-    positions = app.storage.general.get("relocate_positions")
+    selected_transform = read_transform(transform_name)
+    centroid_a = np.array(selected_transform["centroid_a"])
+    centroid_b = np.array(selected_transform["centroid_b"])
+    scaling = selected_transform["scaling"]
+    mirror = np.array(selected_transform.get("mirror", [[1, 0], [0, 1]]))
+    rotation = np.array(selected_transform["rotation"])
+    positions = app.storage.user.get("relocate_positions")
 
     offset = np.array([offset_x_input.value or 0, offset_y_input.value or 0])
     relocated_positions = apply_transform(positions, centroid_a, centroid_b, scaling, mirror, rotation) + offset
+    # Unique per-call temp file, read into memory, then deleted immediately -
+    # no shared filename, and nothing lingers on disk afterward.
     temp_path = write_positions(relocated_positions, f"temp_{uuid.uuid4().hex}", "czstm")
     with open(temp_path, "rb") as f:
         content = f.read()
     os.remove(temp_path)
-    original_name = app.storage.general.get("relocate_position_file", "")
+    original_name = app.storage.user.get("relocate_position_file", "")
     base = os.path.splitext(os.path.basename(original_name))[0] if original_name else "positions"
     ui.download(content, filename=f"{base}_relocated.czstm")
 
@@ -193,7 +223,10 @@ def update_transform_dropdown():
             ui.item(name, on_click=lambda n=name: transform_positions(n))
 
 def clear_all_data():
-    app.storage.general.clear()
+    # app.storage.user is scoped to this browser session, so this only
+    # clears the data belonging to the person who clicked the button -
+    # not everyone connected to the app.
+    app.storage.user.clear()
     offset_x_input.value = 0
     offset_y_input.value = 0
     sync()
@@ -238,4 +271,4 @@ for _col in ("flip_x", "flip_y"):
 ui.button("Clear all data", on_click=clear_all_data)
 update_transform_dropdown()
 ui.timer(2, sync)
-ui.run(port=80)
+ui.run(port=80, storage_secret=get_storage_secret())
