@@ -271,4 +271,4 @@ for _col in ("flip_x", "flip_y"):
 ui.button("Clear all data", on_click=clear_all_data)
 update_transform_dropdown()
 ui.timer(2, sync)
-ui.run(port=80, storage_secret=get_storage_secret())
+ui.run(port=8080, storage_secret=get_storage_secret())
