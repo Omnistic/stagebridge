@@ -214,3 +214,9 @@ __marimo__/
 # pixi environments
 .pixi
 *.egg-info
+
+# Temporary export files
+temp_*
+
+# Calibrations are per-deployment data, not source
+available_transforms/

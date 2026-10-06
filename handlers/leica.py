@@ -31,8 +31,24 @@ class LeicaHandler(BaseHandler):
 
         return np.array(positions) * 1e6
 
-    def write(self, positions: np.ndarray, path: str):
-        raise NotImplementedError(
-            "Writing Leica files is not yet supported. "
-            "Use ZeissHandler.write() to export positions for Zeiss."
+    def write(self, positions: np.ndarray, path: str, z_safe: float = 0.0):
+        root = ET.Element("StageOverviewRegions")
+        items = ET.SubElement(
+            ET.SubElement(ET.SubElement(root, "Regions"), "ShapeList"), "Items"
         )
+        for i, pos in enumerate(positions):
+            item = ET.SubElement(items, f"Item{i}")
+            ET.SubElement(item, "Name").text = f"Region{i + 1}"
+            ET.SubElement(item, "Type").text = "Point"
+            ET.SubElement(item, "Visible").text = "true"
+            vertex = ET.SubElement(
+                ET.SubElement(ET.SubElement(item, "Verticies"), "Items"), "Item0"
+            )
+            # Leica stores positions in meters, we work in micrometers
+            ET.SubElement(vertex, "X").text = f"{pos[0] / 1e6:.10f}"
+            ET.SubElement(vertex, "Y").text = f"{pos[1] / 1e6:.10f}"
+            ET.SubElement(vertex, "Z").text = f"{z_safe / 1e6:.10g}"
+            ET.SubElement(vertex, "T").text = "0"
+        tree = ET.ElementTree(root)
+        ET.indent(tree)
+        tree.write(path, encoding="utf-8")

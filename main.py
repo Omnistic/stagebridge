@@ -4,7 +4,7 @@ from plotly.subplots import make_subplots
 
 import numpy as np
 
-from handlers import read_positions, write_positions
+from handlers import output_format_for, read_positions, write_positions
 from transform import apply_transform, calculate_transform, read_transform, write_transform
 
 import os, uuid, secrets
@@ -39,6 +39,7 @@ file_columns = [
     {"name": "rotation", "label": "Rotation (degrees)", "field": "rotation"},
     {"name": "flip_x", "label": "Flip X", "field": "flip_x"},
     {"name": "flip_y", "label": "Flip Y", "field": "flip_y"},
+    {"name": "output_format", "label": "Output Format", "field": "output_format"},
 ]
 def update_file_table(table, files):
     if files is not None:
@@ -57,6 +58,7 @@ def update_file_table(table, files):
                 "rotation": round(rotation_deg, 2),
                 "flip_x": bool(mirror[0, 0] < 0),
                 "flip_y": bool(mirror[1, 1] < 0),
+                "output_format": transform.get("output_format", "czstm"),
             })
         table.rows = rows
     else:
@@ -168,7 +170,8 @@ def calculate_transform_handle():
         "centroid_b": centroid_b.tolist(),
         "scaling": float(scaling),
         "mirror": mirror.tolist(),
-        "rotation": rotation.tolist()
+        "rotation": rotation.tolist(),
+        "output_format": output_format_for(app.storage.user["calibrate_b_position_file"])
     }
 
     update_calibration_plot()
@@ -200,19 +203,21 @@ def transform_positions(transform_name):
     scaling = selected_transform["scaling"]
     mirror = np.array(selected_transform.get("mirror", [[1, 0], [0, 1]]))
     rotation = np.array(selected_transform["rotation"])
+    # Transforms saved before output_format existed all target Zeiss microscopes
+    output_format = selected_transform.get("output_format", "czstm")
     positions = app.storage.user.get("relocate_positions")
 
     offset = np.array([offset_x_input.value or 0, offset_y_input.value or 0])
     relocated_positions = apply_transform(positions, centroid_a, centroid_b, scaling, mirror, rotation) + offset
     # Unique per-call temp file, read into memory, then deleted immediately -
     # no shared filename, and nothing lingers on disk afterward.
-    temp_path = write_positions(relocated_positions, f"temp_{uuid.uuid4().hex}", "czstm")
+    temp_path = write_positions(relocated_positions, f"temp_{uuid.uuid4().hex}", output_format)
     with open(temp_path, "rb") as f:
         content = f.read()
     os.remove(temp_path)
     original_name = app.storage.user.get("relocate_position_file", "")
     base = os.path.splitext(os.path.basename(original_name))[0] if original_name else "positions"
-    ui.download(content, filename=f"{base}_relocated.czstm")
+    ui.download(content, filename=f"{base}_relocated.{output_format}")
 
 def update_transform_dropdown():
     available_transforms = os.listdir("available_transforms") if os.path.exists("available_transforms") else []
@@ -265,10 +270,12 @@ with ui.tab_panels(tabs, value=relocate_tab).classes("w-full"):
             ui.button("Calculate Transform", on_click=calculate_transform_handle)
             transform_status_label = ui.label("").classes("text-h7")
 ui.label("Available Transforms:").classes("text-h6")
-transform_file_table = ui.table(columns=file_columns, rows=[]).classes("w-[1000px]")
+transform_file_table = ui.table(columns=file_columns, rows=[]).classes("w-fit max-w-full")
 for _col in ("flip_x", "flip_y"):
     transform_file_table.add_slot(f"body-cell-{_col}", '<q-td :props="props"><q-checkbox :model-value="props.value" disable /></q-td>')
 ui.button("Clear all data", on_click=clear_all_data)
 update_transform_dropdown()
 ui.timer(2, sync)
-ui.run(host="0.0.0.0", port=8642, storage_secret=get_storage_secret(), reload=False, show=False)
+ui.run(host="0.0.0.0", port=8642, storage_secret=get_storage_secret(),
+       reload=False, show=False,
+       title="StageBridge", favicon="🔬")
